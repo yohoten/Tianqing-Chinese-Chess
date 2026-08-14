@@ -18,10 +18,15 @@
 ### 可选依赖：chessai-python（分析面板增强）
 
 ```bash
-.venv\Scripts\python.exe -m pip install chessai-python
+# 方式一：独立清单安装
+pip install -r requirements-optional.txt
+# 方式二：与主项目一起（editable 安装）
+pip install -e ".[analysis]"
 ```
 
 已安装时：分析面板显示 FEN、将军/将死/飞将状态（`chessai.game` 规则引擎交叉校验）、AI 推荐走法合法性标记。未安装时游戏正常运行，分析面板显示"chessai 未安装"。集成代码见 `chinese_chess/chessai_bridge.py`。
+
+> 注意：`chessai-python` 是完整应用包，会引入 opencv / fastapi / pywebview 等大量重依赖；仅玩游戏、不需要分析面板时可跳过，游戏功能不受影响。
 
 ## 环境要求
 
@@ -48,20 +53,27 @@ python main.py
 
 ```
 Python_chinese_chess/
-├── main.py                 # 程序入口
-├── requirements.txt        # 依赖清单
+├── main.py                 # 程序入口：python main.py（或 pip 安装后运行 chinese-chess）
+├── pyproject.toml          # 项目元数据 / 命令入口 / 可选依赖（pip install -e .）
+├── requirements.txt        # 核心依赖（pygame）
+├── requirements-optional.txt  # 可选依赖（chessai，分析面板增强）
 ├── README.md
 ├── .gitignore
-├── backup/                 # 原版代码与资源备份（legacy/ 为重构前的平铺版本）
 ├── chinese_chess/          # 主包
 │   ├── __init__.py
 │   ├── constants.py        # 常量与图片资源管理
-│   ├── pieces.py           # 棋子走法规则（纯逻辑，可单测）
+│   ├── fonts.py            # 中文字体管理（候选字体名 + 文件兜底）
+│   ├── pieces.py           # 棋子走法规则 + Board 局面（纯逻辑，可单测）
 │   ├── board.py            # 棋盘 / 棋子渲染
 │   ├── button.py           # 按钮控件
-│   ├── ai.py               # Alpha-Beta AI + 局面评估 + 终局判定
-│   └── game.py             # 游戏主循环
+│   ├── ai.py               # Alpha-Beta AI（negamax + 置换表 + 历史启发）
+│   ├── zobrist.py          # Zobrist 哈希（置换表局面键）
+│   ├── engine.py           # 引擎接口抽象（Engine 协议 + AlphaBetaEngine）
+│   ├── chessai_bridge.py   # chessai 集成（FEN / 局面状态 / 走法校验，优雅降级）
+│   └── game.py             # 游戏主循环（状态机 + AI 线程 + 渲染）
 ├── assets/s2/              # 棋子图片（统一小写文件名，跨平台）
+├── docs/
+│   └── DEVELOPMENT.md      # 架构现状 / 性能优化 / 开发建议
 └── tests/                  # 单元测试（不依赖 pygame）
 ```
 
@@ -90,6 +102,7 @@ python -m unittest discover -s tests -v
 
 | 版本 | 说明 |
 | --- | --- |
+| 2.3.1 | 规范化：新增 pyproject.toml（`pip install -e .` + `chinese-chess` 命令 + 可选依赖声明）；拆分 requirements-optional.txt；统一版本号；更新 README 目录结构；清理废弃常量 |
 | 2.3.0 | 状态机化；悔棋（按钮/U 键）；引擎接口抽象；AI 置换表+历史启发（depth4 快 2x）；将帅位置缓存；git 版本管理 |
 | 2.2.0 | 集成 chessai-python：分析面板（H/F1）、FEN/将军/将死交叉校验、桥接层优雅降级 |
 | 2.1.0 | AI 搜索 4x 加速（快速将军检测、make/unmake）、迭代加深+时间预算、AI 线程化不冻结、渲染缓存；开发建议文档 |

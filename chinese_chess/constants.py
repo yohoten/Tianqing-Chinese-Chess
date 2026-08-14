@@ -38,10 +38,10 @@ GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 
 # 渲染辅助色
+# 渲染辅助色
 HIGHLIGHT_COLOR = (255, 215, 0)   # 选中棋子金色高亮
 HINT_COLOR = (80, 160, 80)        # 可走位置提示
-FONT_NAME = "kaiti"
-
+# 中文字体统一由 fonts.get_font() 管理（候选字体名 + 文件兜底）
 # ---------------- 资源路径 ----------------
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "s2"
 

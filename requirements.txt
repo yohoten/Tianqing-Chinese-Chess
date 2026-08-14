@@ -1,2 +1,6 @@
+# 核心依赖（必需）
 pygame>=2.0,<3
-chessai-python
+
+# 可选依赖（棋局分析面板增强，chessai-python 会引入大量重依赖）：
+#   安装：pip install -r requirements-optional.txt
+#   或随主项目：pip install -e ".[analysis]"

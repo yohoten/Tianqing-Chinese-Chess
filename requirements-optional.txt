@@ -1,0 +1,5 @@
+# 可选依赖：棋局分析面板增强（chessai 规则引擎交叉校验）
+# 安装：pip install -r requirements-optional.txt
+# 说明：会引入 opencv / fastapi / pywebview 等大量重依赖（chessai-python 为完整应用包）。
+#       仅玩游戏、不需要分析面板时可跳过本文件，游戏功能不受影响。
+chessai-python

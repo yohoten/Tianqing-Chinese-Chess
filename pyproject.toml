@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chinese-chess"
+version = "2.3.1"
+description = "天青·中国象棋：Python + pygame 中国象棋人机对战（Alpha-Beta AI）"
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["chinese-chess", "xiangqi", "pygame", "alpha-beta"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment :: Board Games",
+]
+dependencies = [
+    "pygame>=2.0,<3",
+]
+
+# 可选依赖：棋局分析面板（chessai 规则引擎交叉校验）
+# 安装：pip install -e ".[analysis]"
+[project.optional-dependencies]
+analysis = [
+    "chessai-python",
+]
+
+# 安装后可用命令：chinese-chess  （等价于 python main.py）
+[project.scripts]
+chinese-chess = "chinese_chess.game:main"
+
+[tool.setuptools]
+# 说明：assets/s2/ 棋子图片随仓库分发，未打包进 wheel。
+# 推荐以 git clone 或 `pip install -e .`（editable）方式运行，以保证资源路径正确。
+include-package-data = false
