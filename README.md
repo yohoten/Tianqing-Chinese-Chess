@@ -99,6 +99,8 @@ python -m unittest discover -s tests -v
 
 ## 性能优化与开发建议
 
+![](https://i.imgs.ovh/2026/08/15/d40a10b5eefddb935c374f48032ae60b.jpg)
+
 详见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)：架构现状、卡顿优化记录（AI 搜索 4 倍加速、时间预算、线程化）、功能/架构/AI/工程/测试的后续开发建议。
 
 ## 变更记录
