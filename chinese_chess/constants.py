@@ -21,22 +21,26 @@ BOARD_MAX_X = START_X + 8 * LINE_SPAN + LINE_SPAN / 2
 BOARD_MIN_Y = START_Y - LINE_SPAN / 2
 BOARD_MAX_Y = START_Y + 9 * LINE_SPAN + LINE_SPAN / 2
 
-# ---------------- 右侧信息栏（按钮 / 状态 / 分析面板分区） ----------------
+# ---------------- 右侧信息栏（标题/状态 / 按钮 / 俘虏区 / 分析面板） ----------------
 # 窗口 900x720：棋盘占 x≈0~540 / y≈0~600，右侧信息栏 x≈560~880
 INFO_X = 560          # 信息栏左边界
 INFO_WIDTH = 320      # 信息栏宽度
 INFO_Y = 40           # 信息栏顶部
 
-# 按钮（信息栏内居中）
+# 按钮（信息栏内居中，位于状态区与俘虏区之间）
 BUTTON_WIDTH = 150
 BUTTON_HEIGHT = 50
 BUTTON_LEFT = INFO_X + (INFO_WIDTH - BUTTON_WIDTH) // 2
-BTN_UNDO_Y = 230
-BTN_RESTART_Y = 300
+BTN_UNDO_Y = 180
+BTN_RESTART_Y = 245
 
-# 分析面板（位于按钮下方，避免与按钮重叠）
+# 俘虏区（按钮下方，展示双方被吃棋子小图）
+CAPTIVE_Y = 310       # 俘虏区顶部
+CAPTIVE_ICON = 24     # 俘虏小图尺寸
+
+# 分析面板（俘虏区下方）
 ANALYSIS_X = INFO_X
-ANALYSIS_Y = 390
+ANALYSIS_Y = 450
 ANALYSIS_WIDTH = INFO_WIDTH
 ANALYSIS_STEP = 24
 

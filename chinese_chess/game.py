@@ -13,6 +13,7 @@ from . import constants as C
 from . import board as board_render
 from .ai import DEFAULT_TIME_BUDGET, game_result
 from .button import Button
+from .fonts import get_font
 from .chessai_bridge import (
     chessai_status,
     chessai_validate_move,
@@ -62,6 +63,7 @@ class MainGame:
         self.check_status = False     # 当前行动方是否被将军（渲染用缓存）
         self.history = []             # 走法历史 [(fx, fy, tx, ty, mover, victim)]
         self.last_move = None         # 最近一步 (fx, fy, tx, ty)，用于渲染标记
+        self.captured = []            # 被吃棋子对象列表（悔棋时恢复）
         # 棋局分析面板（chessai 集成）
         self.show_analysis = False
         self.analysis_fen = ""
@@ -77,6 +79,11 @@ class MainGame:
         self.window = pygame.display.set_mode([C.SCREEN_WIDTH, C.SCREEN_HEIGHT])
         pygame.display.set_caption("天青-中国象棋")
         self.images = C.load_piece_images()
+        # 俘虏区小图缓存（避免每帧缩放）
+        self.small_images = {
+            key: pygame.transform.smoothscale(img, (C.CAPTIVE_ICON, C.CAPTIVE_ICON))
+            for key, img in self.images.items()
+        }
         self.button_undo = Button(self.window, "悔棋",
                                   C.BUTTON_LEFT, C.BTN_UNDO_Y)
         self.button_restart = Button(self.window, "重新开始",
@@ -97,6 +104,7 @@ class MainGame:
         self.check_status = False
         self.history = []
         self.last_move = None
+        self.captured = []
         self.show_analysis = False
         self.analysis_fen = ""
         self.analysis_status = None
@@ -231,6 +239,7 @@ class MainGame:
         victim = self._piece_at(tx, ty)
         if victim is not None:
             self.pieces.remove(victim)
+            self.captured.append(victim)
         self.board.move(fx, fy, tx, ty)
         piece = self._piece_at(fx, fy)
         piece.x, piece.y = tx, ty
@@ -261,6 +270,8 @@ class MainGame:
             piece.x, piece.y = fx, fy
             if victim is not None:
                 self.pieces.append(victim)
+                if victim in self.captured:
+                    self.captured.remove(victim)
 
         pop_one()
         # 若撤销后最后一步是红方（玩家）走的，继续撤销（完整回合 = 黑+红）
@@ -395,6 +406,8 @@ class MainGame:
         self._draw_status()
         if self.show_analysis:
             self._draw_analysis()
+        if self.state == STATE_GAME_OVER:
+            self._draw_end_banner()
 
     def _draw_analysis(self):
         """绘制棋局分析面板（chessai 集成）。信息栏按钮下方分区。"""
@@ -473,24 +486,77 @@ class MainGame:
                                    size=22, color=C.TEXT_COLOR)
             return
 
-        # 轮到谁
+        # 轮到谁（AI 思考时动态省略号）
         if self.state == STATE_AI_THINKING:
-            turn_text = "轮到：黑方（电脑思考中...）"
+            dots = "." * ((pygame.time.get_ticks() // 500) % 4)
+            turn_text = f"轮到：黑方（电脑思考中{dots}）"
         else:
             turn_text = "轮到：红方（你）"
         board_render.draw_text(self.window, turn_text, x + 10, y + 45,
                                size=18, color=C.BLACK)
 
+        # 回合数
+        round_no = len(self.history) // 2 + 1
+        board_render.draw_text(self.window, f"第 {round_no} 回合", x + 10, y + 72,
+                               size=16, color=(70, 70, 70))
+
         # 将军徽章（红底白字，用缓存状态）
         if self.check_status:
-            badge = pygame.Rect(x + 10, y + 80, 96, 30)
+            badge = pygame.Rect(x + 10, y + 96, 96, 30)
             pygame.draw.rect(self.window, C.CHECK_RING_COLOR, badge, border_radius=6)
-            board_render.draw_text(self.window, "将军！", x + 22, y + 86,
+            board_render.draw_text(self.window, "将军！", x + 22, y + 102,
                                    size=20, color=C.WHITE)
 
-        board_render.draw_text(self.window, "H 分析 / U 悔棋", x + 10, y + 132,
+        board_render.draw_text(self.window, "H 分析 / U 悔棋", x + 10, y + 140,
                                size=14, color=(120, 90, 60))
 
+        # 俘虏区（双方被吃棋子小图）
+        self._draw_captives(x + 10, C.CAPTIVE_Y, C.INFO_WIDTH - 20)
+
+    def _draw_captives(self, x, y, max_width):
+        """绘制双方俘虏小图（自动折行）。红方俘虏 = 被红方吃掉的子（黑子）。"""
+        icon = C.CAPTIVE_ICON
+        gap = 4
+        row_h = icon + 6
+        red_cap = [p for p in self.captured if p.player == C.BLACK_PLAYER]
+        black_cap = [p for p in self.captured if p.player == C.RED_PLAYER]
+
+        cy = y
+        for label, group in (("红方俘虏:", red_cap), ("黑方俘虏:", black_cap)):
+            board_render.draw_text(self.window, label, x, cy, size=14, color=(60, 60, 60))
+            cy += 20
+            cx = x
+            if not group:
+                board_render.draw_text(self.window, "（无）", x, cy,
+                                       size=13, color=(150, 150, 150))
+                cy += row_h
+                continue
+            for p in group:
+                self.window.blit(self.small_images[p.image_key], (cx, cy))
+                cx += icon + gap
+                if cx + icon > x + max_width:
+                    cx = x
+                    cy += row_h
+            cy += row_h
+
+    def _draw_end_banner(self):
+        """终局横幅：居中半透明底 + 大字结果。"""
+        text = self.result_text or "对局结束"
+        w, h = 440, 150
+        bx = (C.SCREEN_WIDTH - w) // 2
+        by = (C.SCREEN_HEIGHT - h) // 2 - 30
+        overlay = pygame.Surface((w, h), pygame.SRCALPHA)
+        overlay.fill((25, 25, 25, 185))
+        self.window.blit(overlay, (bx, by))
+        pygame.draw.rect(self.window, C.BOARD_FRAME, (bx, by, w, h), 4, border_radius=14)
+
+        font = get_font(46)
+        surf = font.render(text, True, C.WHITE)
+        self.window.blit(surf, surf.get_rect(center=(C.SCREEN_WIDTH // 2, by + 58)))
+
+        font2 = get_font(18)
+        sub = font2.render("点击「重新开始」再来一局", True, (215, 215, 215))
+        self.window.blit(sub, sub.get_rect(center=(C.SCREEN_WIDTH // 2, by + 116)))
 
 def main():
     game = MainGame()
