@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chinese-chess"
-version = "2.3.1"
+version = "2.4.0"
 description = "天青·中国象棋：Python + pygame 中国象棋人机对战（Alpha-Beta AI）"
 readme = "README.md"
 requires-python = ">=3.8"

@@ -61,6 +61,7 @@ class MainGame:
         self.epoch = 0                # 局面代次：丢弃过期 AI 线程的结果
         self.check_status = False     # 当前行动方是否被将军（渲染用缓存）
         self.history = []             # 走法历史 [(fx, fy, tx, ty, mover, victim)]
+        self.last_move = None         # 最近一步 (fx, fy, tx, ty)，用于渲染标记
         # 棋局分析面板（chessai 集成）
         self.show_analysis = False
         self.analysis_fen = ""
@@ -77,9 +78,9 @@ class MainGame:
         pygame.display.set_caption("天青-中国象棋")
         self.images = C.load_piece_images()
         self.button_undo = Button(self.window, "悔棋",
-                                  C.SCREEN_WIDTH - 160, 240)
+                                  C.BUTTON_LEFT, C.BTN_UNDO_Y)
         self.button_restart = Button(self.window, "重新开始",
-                                     C.SCREEN_WIDTH - 160, 300)
+                                     C.BUTTON_LEFT, C.BTN_RESTART_Y)
         self.reset_game()
 
     def reset_game(self):
@@ -95,6 +96,7 @@ class MainGame:
         self.ai_thread = None
         self.check_status = False
         self.history = []
+        self.last_move = None
         self.show_analysis = False
         self.analysis_fen = ""
         self.analysis_status = None
@@ -233,6 +235,7 @@ class MainGame:
         piece = self._piece_at(fx, fy)
         piece.x, piece.y = tx, ty
         self.history.append((fx, fy, tx, ty, self.current_player, victim))
+        self.last_move = (fx, fy, tx, ty)
 
     def undo_move(self):
         """悔棋：撤销最近一个完整回合，回到玩家上次决策前。
@@ -269,6 +272,8 @@ class MainGame:
         self.selected_moves = []
         self.state = STATE_PLAYING
         self.check_status = is_in_check(self.board, self.current_player)
+        # 更新最近一步标记：若有剩余历史取最后一条，否则清空
+        self.last_move = self.history[-1][:4] if self.history else None
         if self.show_analysis:
             self._refresh_analysis()
 
@@ -347,6 +352,13 @@ class MainGame:
                 return p
         return None
 
+    def _find_king(self, player):
+        """返回某方将/帅棋子（用于将军红环渲染）。"""
+        for p in self.pieces:
+            if p.player == player and p.kind == "king":
+                return p
+        return None
+
     # ------------------------------------------------------------------
     # 渲染
     # ------------------------------------------------------------------
@@ -355,17 +367,29 @@ class MainGame:
         self.window.fill(C.BG_COLOR)
         board_render.draw_chessboard(self.window)
 
+        # 最近一步标记（起点实心点 + 终点圆环）
+        if self.last_move is not None:
+            board_render.draw_last_move(self.window, *self.last_move)
+
         # 选中高亮 + 可走提示（用缓存，避免每帧重算）
         if self.selected is not None and self.state != STATE_GAME_OVER:
             board_render.draw_highlight(self.window, self.selected.x, self.selected.y)
             for tx, ty in self.selected_moves:
                 board_render.draw_hint(self.window, tx, ty)
 
+        # 将军警报：被将军方的将/帅外圈红环
+        if self.check_status and self.state != STATE_GAME_OVER:
+            king = self._find_king(self.current_player)
+            if king is not None:
+                board_render.draw_check_ring(self.window, king.x, king.y)
+
         # 棋子
         for p in self.pieces:
             image = self.images[p.image_key]
             board_render.draw_piece(self.window, image, p.x, p.y)
 
+        # 按钮状态：悔棋在无历史时禁用
+        self.button_undo.disabled = not self.history
         self.button_undo.draw()
         self.button_restart.draw()
         self._draw_status()
@@ -373,10 +397,10 @@ class MainGame:
             self._draw_analysis()
 
     def _draw_analysis(self):
-        """绘制棋局分析面板（chessai 集成）。右侧按钮上方区域。"""
-        x = C.SCREEN_WIDTH - 320
-        y = C.START_Y
-        step = 24
+        """绘制棋局分析面板（chessai 集成）。信息栏按钮下方分区。"""
+        x = C.ANALYSIS_X
+        y = C.ANALYSIS_Y
+        step = C.ANALYSIS_STEP
 
         board_render.draw_text(self.window, "== 棋局分析 (chessai) ==",
                                x, y, size=18, color=C.BLUE)
@@ -437,11 +461,15 @@ class MainGame:
                                size=14, color=(120, 120, 120))
 
     def _draw_status(self):
-        x = C.SCREEN_WIDTH - 160
-        y = C.START_Y
+        x = C.INFO_X
+        y = C.INFO_Y
+
+        # 信息栏标题
+        board_render.draw_text(self.window, "天青 · 中国象棋", x + 10, y,
+                               size=24, color=(90, 60, 30))
 
         if self.state == STATE_GAME_OVER:
-            board_render.draw_text(self.window, self.result_text, x, y + 40,
+            board_render.draw_text(self.window, self.result_text, x + 10, y + 55,
                                    size=22, color=C.TEXT_COLOR)
             return
 
@@ -450,15 +478,18 @@ class MainGame:
             turn_text = "轮到：黑方（电脑思考中...）"
         else:
             turn_text = "轮到：红方（你）"
-        board_render.draw_text(self.window, turn_text, x, y, size=18,
-                               color=C.TEXT_COLOR)
+        board_render.draw_text(self.window, turn_text, x + 10, y + 45,
+                               size=18, color=C.BLACK)
 
-        # 将军提示（用缓存）
+        # 将军徽章（红底白字，用缓存状态）
         if self.check_status:
-            board_render.draw_text(self.window, "将军！", x, y + 30,
-                                   size=22, color=C.TEXT_COLOR)
-        board_render.draw_text(self.window, "按 H 查看棋局分析 / U 悔棋", x, y + 60,
-                               size=14, color=(120, 120, 120))
+            badge = pygame.Rect(x + 10, y + 80, 96, 30)
+            pygame.draw.rect(self.window, C.CHECK_RING_COLOR, badge, border_radius=6)
+            board_render.draw_text(self.window, "将军！", x + 22, y + 86,
+                                   size=20, color=C.WHITE)
+
+        board_render.draw_text(self.window, "H 分析 / U 悔棋", x + 10, y + 132,
+                               size=14, color=(120, 90, 60))
 
 
 def main():
