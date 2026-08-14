@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>天青 · 中国象棋 — Python + pygame 智能人机对战</title>
+<meta name="description" content="天青·中国象棋：基于 Python + pygame 的开源中国象棋人机对战程序，内置 Alpha-Beta 剪枝 AI，支持悔棋、棋局分析、将军/将死/困毙判定。">
+<style>
+  :root {
+    --wood-dark: #8a5a2b;
+    --wood-mid: #a9713a;
+    --wood: #c79a63;
+    --wood-light: #e8cfa6;
+    --cream: #f6edd9;
+    --ink: #3a2a17;
+    --cinnabar: #b03a2e;
+    --gold: #d9a441;
+    --shadow: 0 10px 30px rgba(58, 42, 23, .25);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: "KaiTi", "STKaiti", "楷体", "Microsoft YaHei", "PingFang SC", sans-serif;
+    color: var(--ink);
+    line-height: 1.7;
+    background:
+      radial-gradient(circle at 20% 10%, rgba(255, 245, 220, .55), transparent 45%),
+      radial-gradient(circle at 85% 90%, rgba(176, 58, 46, .08), transparent 40%),
+      repeating-linear-gradient(0deg, #d9b587 0, #d9b587 9px, #cdA474 9px, #cda474 10px),
+      linear-gradient(135deg, #e2c394, #c79a63);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 60px; }
+
+  /* ---------- 导航 ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(58, 42, 23, .92);
+    backdrop-filter: blur(6px);
+    box-shadow: 0 4px 14px rgba(0,0,0,.25);
+  }
+  nav .inner {
+    max-width: 1080px; margin: 0 auto; padding: 12px 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 8px;
+  }
+  nav .brand { color: var(--cream); font-size: 1.15rem; font-weight: bold; letter-spacing: 2px; }
+  nav .links a {
+    color: #e8d9b8; text-decoration: none; margin-left: 18px; font-size: .95rem;
+    border-bottom: 2px solid transparent; transition: .2s;
+  }
+  nav .links a:hover { color: #fff; border-color: var(--gold); }
+
+  /* ---------- Hero ---------- */
+  header.hero {
+    position: relative;
+    margin: 28px auto 34px;
+    max-width: 1080px;
+    border-radius: 18px;
+    padding: 46px 30px 40px;
+    background: linear-gradient(160deg, #6b4320, #8a5a2b 55%, #5f3a1a);
+    color: var(--cream);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    text-align: center;
+  }
+  header.hero::after {
+    content: "";
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(90deg, transparent 49.5%, rgba(255,255,255,.15) 50%, transparent 50.5%),
+      linear-gradient(0deg, transparent 49.5%, rgba(255,255,255,.15) 50%, transparent 50.5%);
+    background-size: 60px 60px;
+    opacity: .35;
+    pointer-events: none;
+  }
+  header.hero .badge {
+    display: inline-block; margin-bottom: 14px; padding: 4px 14px;
+    font-size: .85rem; letter-spacing: 2px;
+    background: var(--cinnabar); color: #fff; border-radius: 999px;
+  }
+  header.hero h1 { font-size: 2.9rem; letter-spacing: 8px; font-weight: bold; }
+  header.hero .sub { margin-top: 10px; font-size: 1.15rem; color: #f0dfb8; letter-spacing: 2px; }
+  header.hero .desc { max-width: 720px; margin: 18px auto 0; font-size: .98rem; color: #e5d3a8; }
+  header.hero .tags { margin-top: 18px; }
+  header.hero .tag {
+    display: inline-block; margin: 4px; padding: 4px 14px;
+    border: 1px solid rgba(217,164,65,.7); border-radius: 999px;
+    font-size: .82rem; color: var(--gold);
+  }
+
+  /* 装饰棋盘（CSS 9×10 网格） */
+  .mini-board {
+    margin: 26px auto 0; width: 270px; height: 300px;
+    background: var(--cream);
+    background-image:
+      linear-gradient(var(--wood-dark) 2px, transparent 2px),
+      linear-gradient(90deg, var(--wood-dark) 2px, transparent 2px);
+    background-size: 30px 30px;
+    position: relative;
+    border: 5px solid var(--wood-dark); border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0,0,0,.35);
+    display: grid; place-items: center;
+  }
+  .mini-board span {
+    position: absolute; z-index: 2; font-size: 1.05rem; color: var(--cinnabar);
+    letter-spacing: 10px; font-weight: bold; text-shadow: 0 1px 0 rgba(255,255,255,.6);
+  }
+
+  /* ---------- 通用区块 ---------- */
+  section { margin-top: 40px; }
+  h2.sec {
+    font-size: 1.6rem; letter-spacing: 4px; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  h2.sec::before {
+    content: ""; display: inline-block; width: 8px; height: 26px;
+    background: var(--cinnabar); border-radius: 4px;
+  }
+  .lead { color: #5c452a; margin-bottom: 18px; }
+
+  .card {
+    background: rgba(246, 237, 217, .94);
+    border: 1px solid rgba(138, 90, 43, .25);
+    border-radius: 14px;
+    box-shadow: 0 6px 20px rgba(58,42,23,.12);
+    padding: 22px 24px;
+  }
+
+  /* 特性网格 */
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+  }
+  .feat {
+    background: rgba(246, 237, 217, .94);
+    border-left: 5px solid var(--wood-mid);
+    border-radius: 10px; padding: 16px 18px;
+    box-shadow: 0 4px 14px rgba(58,42,23,.1);
+    transition: transform .2s, box-shadow .2s;
+  }
+  .feat:hover { transform: translateY(-4px); box-shadow: 0 10px 24px rgba(58,42,23,.18); }
+  .feat .icon { font-size: 1.5rem; }
+  .feat h3 { margin: 6px 0 4px; font-size: 1.05rem; letter-spacing: 1px; }
+  .feat p { font-size: .88rem; color: #5c452a; }
+
+  /* 代码块 */
+  pre {
+    background: #2e2114; color: #f0dfb8; padding: 16px 18px; border-radius: 10px;
+    font-family: "Consolas", "Courier New", monospace; font-size: .88rem;
+    overflow-x: auto; line-height: 1.6; margin: 10px 0;
+  }
+  pre .cm { color: #9b8a6b; }
+  code.inline {
+    background: rgba(138,90,43,.14); color: #7a3f14; padding: 1px 7px;
+    border-radius: 5px; font-family: "Consolas", monospace; font-size: .88em;
+  }
+
+  /* 操作步骤 */
+  ol.steps { padding-left: 22px; }
+  ol.steps li { margin-bottom: 10px; }
+  kbd {
+    background: #3a2a17; color: #f0dfb8; padding: 1px 8px; border-radius: 5px;
+    font-family: Consolas, monospace; font-size: .85em;
+  }
+
+  /* 目录树 */
+  pre.tree { line-height: 1.7; }
+
+  /* 版本时间线 */
+  .versions { list-style: none; }
+  .versions li {
+    display: flex; gap: 14px; padding: 12px 4px; align-items: baseline;
+    border-bottom: 1px dashed rgba(138,90,43,.3);
+  }
+  .versions li:last-child { border-bottom: none; }
+  .ver { min-width: 70px; font-weight: bold; color: var(--cinnabar); font-size: 1.02rem; }
+  .versions li p { font-size: .9rem; color: #4d3a21; }
+
+  footer {
+    margin-top: 50px; text-align: center; color: #6b4a24; font-size: .85rem;
+    padding: 20px; border-top: 1px solid rgba(138,90,43,.3);
+  }
+  footer a { color: var(--cinnabar); }
+
+  @media (max-width: 640px) {
+    header.hero h1 { font-size: 2rem; letter-spacing: 4px; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="inner">
+    <span class="brand">♟ 天青 · 中国象棋</span>
+    <span class="links">
+      <a href="#features">特性</a>
+      <a href="#tech">技术栈</a>
+      <a href="#start">快速开始</a>
+      <a href="#guide">操作说明</a>
+      <a href="#structure">目录结构</a>
+      <a href="#versions">版本历史</a>
+    </span>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <header class="hero">
+    <span class="badge">v2.5.0 · 开源 · Python</span>
+    <h1>天青 · 中国象棋</h1>
+    <p class="sub">楚河汉界 · 运筹帷幄</p>
+    <p class="desc">
+      一款基于 <b>Python + pygame</b> 的中国象棋人机对战程序。
+      内置 <b>Alpha-Beta 剪枝搜索 + 置换表 + 历史启发</b> 的智能 AI，
+      支持悔棋、将军/将死/困毙判定与 chessai 棋局分析面板，
+      配以木纹棋盘风格的精致 UI。
+    </p>
+    <div class="tags">
+      <span class="tag">Python 3.8+</span>
+      <span class="tag">pygame</span>
+      <span class="tag">Alpha-Beta AI</span>
+      <span class="tag">chessai 可选集成</span>
+      <span class="tag">44 项单元测试</span>
+    </div>
+    <div class="mini-board"><span>楚&nbsp;河</span><span>汉&nbsp;界</span></div>
+  </header>
+
+  <!-- 特性 -->
+  <section id="features">
+    <h2 class="sec">功能特性</h2>
+    <p class="lead">规则严谨、AI 智能、界面精美，兼顾教学演示与娱乐。</p>
+    <div class="grid">
+      <div class="feat"><span class="icon">🧠</span><h3>智能 AI 对战</h3><p>玩家执红（下方），电脑执黑；AI 采用 negamax + Alpha-Beta 剪枝、置换表与历史启发，默认 2 秒思考预算，界面不冻结。</p></div>
+      <div class="feat"><span class="icon">📜</span><h3>完整象棋规则</h3><p>七种棋子走法、蹩马腿、塞象眼、炮架、过河兵、九宫、飞将、不送将过滤，规则层纯逻辑可单测。</p></div>
+      <div class="feat"><span class="icon">🏁</span><h3>真正的胜负判定</h3><p>将军 / 将死 / 困毙（和棋）完整判定，显式状态机 PLAYING → AI_THINKING → GAME_OVER。</p></div>
+      <div class="feat"><span class="icon">⏪</span><h3>悔棋</h3><p>「悔棋」按钮或 U 键撤销最近一个完整回合，支持吃子恢复；无历史时按钮自动禁用。</p></div>
+      <div class="feat"><span class="icon">🔬</span><h3>棋局分析面板</h3><p>按 H / F1 打开：FEN、chessai 将军/将死/飞将状态、AI 推荐走法（自研 AI 计算 + chessai 交叉校验）。</p></div>
+      <div class="feat"><span class="icon">🎨</span><h3>木纹棋盘 UI</h3><p>程序化木纹棋盘、河界描边艺术字、棋子缩放适配、最近一步标记、将军红环警报、俘虏区、终局横幅。</p></div>
+      <div class="feat"><span class="icon">🔌</span><h3>引擎接口抽象</h3><p><code class="inline">Engine.get_best_move()</code> 协议，可替换自研 AI 或接外部 UCI 引擎，游戏逻辑零改动。</p></div>
+      <div class="feat"><span class="icon">⚡</span><h3>性能优化</h3><p>快速将军检测、make/unmake 就地走子、迭代加深 + 时间预算、AI 后台线程、渲染缓存；深度 3 提速约 7 倍。</p></div>
+      <div class="feat"><span class="icon">🧪</span><h3>测试与工程化</h3><p>44 项单元测试 + 无头冒烟脚本；pyproject.toml 规范打包（<code class="inline">pip install -e .</code> / <code class="inline">chinese-chess</code> 命令）。</p></div>
+    </div>
+  </section>
+
+  <!-- 技术栈 -->
+  <section id="tech">
+    <h2 class="sec">技术栈</h2>
+    <div class="card">
+      <ul style="padding-left:20px;">
+        <li><b>语言 / 环境</b>：Python 3.8+，Windows / Linux / macOS</li>
+        <li><b>图形界面</b>：pygame 2.x（棋盘、棋子、字体渲染）</li>
+        <li><b>AI 搜索</b>：negamax + Alpha-Beta 剪枝 + 置换表（Zobrist）+ 历史启发 + 迭代加深</li>
+        <li><b>可选依赖</b>：chessai-python（分析面板规则交叉校验，未安装时优雅降级）</li>
+        <li><b>工程</b>：pyproject.toml / requirements 双清单 / git 版本管理 / unittest</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 快速开始 -->
+  <section id="start">
+    <h2 class="sec">快速开始</h2>
+    <div class="card">
+      <p>安装依赖（核心只需 pygame）：</p>
+      <pre>pip install -r requirements.txt</pre>
+      <p>运行游戏：</p>
+      <pre>python main.py</pre>
+      <p>规范安装后也可直接用命令启动（可选）：</p>
+      <pre>pip install -e .<br><span class="cm"># 之后可用命令：</span> chinese-chess</pre>
+      <p>可选：安装分析面板增强（会引入 opencv/fastapi 等重依赖，可跳过）：</p>
+      <pre>pip install -r requirements-optional.txt</pre>
+    </div>
+  </section>
+
+  <!-- 操作说明 -->
+  <section id="guide">
+    <h2 class="sec">操作说明</h2>
+    <div class="card">
+      <ol class="steps">
+        <li>点击己方棋子选中（金色高亮），可走位置显示绿色圆点</li>
+        <li>点击可走位置落子；点击己方其他棋子可改选</li>
+        <li>电脑思考时状态栏提示，被将军时显示红色警报与将子红环</li>
+        <li>按 <kbd>U</kbd> 或点「悔棋」撤销最近一个完整回合（吃子恢复）</li>
+        <li>按 <kbd>H</kbd> / <kbd>F1</kbd> 开关棋局分析面板（FEN、状态、AI 推荐）</li>
+        <li>终局弹出横幅，点「重新开始」再来一局</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 目录结构 -->
+  <section id="structure">
+    <h2 class="sec">目录结构</h2>
+    <pre class="tree">Python_chinese_chess/
+├── main.py                   # 程序入口
+├── pyproject.toml            # 项目元数据 / 命令入口 / 可选依赖
+├── requirements.txt          # 核心依赖（pygame）
+├── requirements-optional.txt # 可选依赖（chessai 分析面板）
+├── README.md / index.html    # 说明文档与介绍页
+├── chinese_chess/            # 主包
+│   ├── constants.py          # 常量与资源管理
+│   ├── fonts.py              # 中文字体管理（候选字体 + 文件兜底）
+│   ├── pieces.py             # 走法规则 + Board 局面（纯逻辑）
+│   ├── board.py              # 棋盘 / 棋子渲染
+│   ├── button.py             # 三态按钮控件
+│   ├── ai.py                 # Alpha-Beta AI + 评估 + 终局判定
+│   ├── zobrist.py            # Zobrist 哈希（置换表键）
+│   ├── engine.py             # 引擎接口抽象
+│   ├── chessai_bridge.py     # chessai 集成（优雅降级）
+│   └── game.py               # 游戏主循环（状态机 + AI 线程）
+├── assets/s2/                # 14 张棋子图片
+├── scripts/smoke_ui.py       # 无头冒烟脚本
+├── docs/DEVELOPMENT.md       # 开发建议与性能优化记录
+└── tests/                    # 44 项单元测试（不依赖 pygame）</pre>
+  </section>
+
+  <!-- 版本历史 -->
+  <section id="versions">
+    <h2 class="sec">版本历史</h2>
+    <div class="card">
+      <ul class="versions">
+        <li><span class="ver">2.5.0</span><p>P2 信息与动效：俘虏区（双方被吃棋子小图）、回合数显示、AI 思考动态省略号、终局居中半透明横幅 + 大字。</p></li>
+        <li><span class="ver">2.4.0</span><p>UI 优化：信息栏布局分区（消除重叠）、窗口 900×720、木纹棋盘 + 河界艺术字、棋子缩放与描边、最近一步标记、将军警报、按钮三态；修复 GIF 8-bit 缩放崩溃。</p></li>
+        <li><span class="ver">2.3.1</span><p>工程规范化：pyproject.toml、可选依赖拆分、版本号统一、README 更新。</p></li>
+        <li><span class="ver">2.3.0</span><p>状态机化、悔棋（按钮/U 键）、引擎接口抽象、AI 置换表 + 历史启发、将帅位置缓存、git 版本管理。</p></li>
+        <li><span class="ver">2.2.0</span><p>集成 chessai-python：分析面板（H/F1）、FEN / 将军 / 将死交叉校验、桥接层优雅降级。</p></li>
+        <li><span class="ver">2.1.0</span><p>AI 搜索 4× 加速、迭代加深 + 时间预算、AI 线程化不冻结、渲染缓存。</p></li>
+        <li><span class="ver">2.0.0</span><p>重构为标准包结构；修复走法 / 胜负 bug；AI 重写为 Alpha-Beta；新增将军 / 将死 / 困毙与单元测试。</p></li>
+        <li><span class="ver">1.0.0</span><p>原平铺版脚本，可运行但电脑无智能。</p></li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <p>天青 · 中国象棋 — 基于 Python + pygame 的开源项目 · 欢迎学习、演示与二次开发</p>
+    <p style="margin-top:6px;">文档：<a href="README.md">README</a> · <a href="docs/DEVELOPMENT.md">开发文档</a> · 运行：<code class="inline">python main.py</code></p>
+  </footer>
+
+</div>
+</body>
+</html>
