@@ -16,6 +16,7 @@ from .constants import (
     RED_PLAYER,
     BLACK_PLAYER,
 )
+from .zobrist import zobrist_key
 
 Pos = Tuple[int, int]           # (x, y)
 Move = Tuple[int, int, int, int]  # (from_x, from_y, to_x, to_y)
@@ -196,6 +197,9 @@ class Board:
     def __init__(self, pieces: Optional[List["Pieces"]] = None):
         self.color = [[EMPTY] * BOARD_ROWS for _ in range(BOARD_COLS)]
         self.kind = [[""] * BOARD_ROWS for _ in range(BOARD_COLS)]
+        self._red_king: Optional[Pos] = None   # 将帅位置缓存（O(1) 查询）
+        self._black_king: Optional[Pos] = None
+        self.zhash = 0                         # Zobrist 哈希（增量维护，供置换表）
         if pieces:
             for p in pieces:
                 self.place(p.player, p.kind, p.x, p.y)
@@ -203,44 +207,91 @@ class Board:
     def place(self, player: int, kind: str, x: int, y: int) -> None:
         self.color[x][y] = player
         self.kind[x][y] = kind
+        self._update_king_cache(player, kind, x, y)
+        self.zhash ^= zobrist_key(x, y, player, kind)
 
     def remove(self, x: int, y: int) -> None:
+        player = self.color[x][y]
+        kind = self.kind[x][y]
         self.color[x][y] = EMPTY
         self.kind[x][y] = ""
+        if kind == "king":
+            if player == RED_PLAYER:
+                self._red_king = None
+            else:
+                self._black_king = None
+        if player != EMPTY:
+            self.zhash ^= zobrist_key(x, y, player, kind)
+
+    def _update_king_cache(self, player: int, kind: str, x: int, y: int) -> None:
+        if kind == "king":
+            if player == RED_PLAYER:
+                self._red_king = (x, y)
+            else:
+                self._black_king = (x, y)
 
     def move(self, fx: int, fy: int, tx: int, ty: int):
         """执行走子（直接覆盖，用于游戏层）。
 
         返回被吃子的 (color, kind)，供搜索层 undo 使用。
         """
+        player = self.color[fx][fy]
+        kind = self.kind[fx][fy]
         cap_color = self.color[tx][ty]
         cap_kind = self.kind[tx][ty]
-        self.color[tx][ty] = self.color[fx][fy]
-        self.kind[tx][ty] = self.kind[fx][fy]
+
+        self.color[tx][ty] = player
+        self.kind[tx][ty] = kind
         self.color[fx][fy] = EMPTY
         self.kind[fx][fy] = ""
+
+        # 王位置缓存
+        if kind == "king":
+            self._update_king_cache(player, kind, tx, ty)
+        if cap_kind == "king":
+            if cap_color == RED_PLAYER:
+                self._red_king = None
+            else:
+                self._black_king = None
+        # Zobrist 增量：移除原位、移除被吃、放置新位
+        self.zhash ^= zobrist_key(fx, fy, player, kind)
+        if cap_color != EMPTY:
+            self.zhash ^= zobrist_key(tx, ty, cap_color, cap_kind)
+        self.zhash ^= zobrist_key(tx, ty, player, kind)
         return cap_color, cap_kind
 
     def unmove(self, fx: int, fy: int, tx: int, ty: int,
                cap_color: int, cap_kind: str) -> None:
         """撤销 move()，恢复被吃子（搜索层用，避免反复复制棋盘）。"""
-        self.color[fx][fy] = self.color[tx][ty]
-        self.kind[fx][fy] = self.kind[tx][ty]
+        player = self.color[tx][ty]
+        kind = self.kind[tx][ty]
+        self.color[fx][fy] = player
+        self.kind[fx][fy] = kind
         self.color[tx][ty] = cap_color
         self.kind[tx][ty] = cap_kind
+
+        # 王位置缓存：移动的王回原位，被吃王恢复
+        if kind == "king":
+            self._update_king_cache(player, kind, fx, fy)
+        if cap_kind == "king" and cap_color != EMPTY:
+            self._update_king_cache(cap_color, cap_kind, tx, ty)
+        # Zobrist 增量反向
+        self.zhash ^= zobrist_key(fx, fy, player, kind)
+        if cap_color != EMPTY:
+            self.zhash ^= zobrist_key(tx, ty, cap_color, cap_kind)
+        self.zhash ^= zobrist_key(tx, ty, player, kind)
 
     def copy(self) -> "Board":
         new = Board()
         new.color = [row[:] for row in self.color]
         new.kind = [row[:] for row in self.kind]
+        new._red_king = self._red_king
+        new._black_king = self._black_king
+        new.zhash = self.zhash
         return new
 
     def find_king(self, player: int) -> Optional[Pos]:
-        for x in range(BOARD_COLS):
-            for y in range(BOARD_ROWS):
-                if self.color[x][y] == player and self.kind[x][y] == "king":
-                    return x, y
-        return None
+        return self._red_king if player == RED_PLAYER else self._black_king
 
     def to_pieces(self) -> List["Pieces"]:
         """转换为棋子对象列表（供渲染 / 回写游戏层使用）。"""

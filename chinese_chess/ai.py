@@ -39,6 +39,8 @@ def _set_search_budget(max_time: float):
     _search_budget = max_time
     _search_start = time.time()
     _search_nodes = 0
+    _history_table.clear()   # 每次搜索（迭代加深外层）重置历史启发
+    _t_table.clear()         # 置换表按“一步搜索”粒度复用
 
 
 def _check_search_time():
@@ -125,19 +127,53 @@ def evaluate(board: Board, player: int) -> float:
 
 
 def _move_order(move: Move, board: Board) -> float:
-    """走法排序启发：吃子优先（MVV-LVA），其余按 0。"""
+    """吃子走法的 MVV-LVA 排序分（吃大子优先；用小兵吃大子更好）。"""
     fx, fy, tx, ty = move
     victim = board.color[tx][ty]
     if victim != EMPTY:
         victim_kind = board.kind[tx][ty]
         attacker_kind = board.kind[fx][fy]
-        # 价值差越大越优先（吃大子优先；用小兵吃大子更好）
         return PIECE_VALUE.get(victim_kind, 0) * 10 - PIECE_VALUE.get(attacker_kind, 0) * 0.1
     return 0.0
 
 
+# 历史启发表：记录剪枝走法的“业绩”，用于后续走法排序
+_history_table = {}
+
+# 置换表（Transposition Table）：{zhash: (depth, flag, score, best_move)}
+# flag: TT_EXACT（精确值）| TT_LOWER（>= score）| TT_UPPER（<= score）
+TT_EXACT, TT_LOWER, TT_UPPER = 0, 1, 2
+_t_table = {}
+
+
+def _order_moves(moves, board, tt_move=None):
+    """走法排序：置换表最佳走法优先，其次吃子（MVV-LVA），再按历史启发。
+
+    相比对全部走法 sorted()，这里只对数量较少的吃子走法排序，
+    普通走法用 dict 查询历史分排序，整体开销更小。
+    """
+    if tt_move is not None:
+        rest = [m for m in moves if m != tt_move]
+        return [tt_move] + _order_moves(rest, board)
+    caps = []
+    quiets = []
+    for m in moves:
+        if board.color[m[2]][m[3]] != EMPTY:
+            caps.append(m)
+        else:
+            quiets.append(m)
+    caps.sort(key=lambda m: _move_order(m, board), reverse=True)
+    quiets.sort(key=lambda m: _history_table.get(m, 0), reverse=True)
+    return caps + quiets
+
+
+def _record_history(move: Move, depth: int) -> None:
+    """剪枝命中时给该走法记功，提升后续排序优先级。"""
+    _history_table[move] = _history_table.get(move, 0) + depth * depth
+
+
 def negamax(board: Board, depth: int, alpha: float, beta: float, player: int) -> float:
-    """negamax + Alpha-Beta 剪枝，从 player 视角返回局面价值。
+    """negamax + Alpha-Beta 剪枝 + 置换表，从 player 视角返回局面价值。
 
     使用 make/unmake 走子，不复制棋盘。
     """
@@ -152,19 +188,47 @@ def negamax(board: Board, depth: int, alpha: float, beta: float, player: int) ->
     if depth == 0:
         return evaluate(board, player)
 
+    # 置换表探测
+    key = board.zhash
+    entry = _t_table.get(key)
+    tt_move = None
+    if entry is not None and entry[0] >= depth:
+        e_depth, e_flag, e_score, e_move = entry
+        if e_flag == TT_EXACT:
+            return e_score
+        if e_flag == TT_LOWER and e_score >= beta:
+            return e_score
+        if e_flag == TT_UPPER and e_score <= alpha:
+            return e_score
+        tt_move = e_move
+
     best = -INF
-    ordered = sorted(moves, key=lambda m: _move_order(m, board), reverse=True)
+    best_move = None
+    orig_alpha = alpha
+    ordered = _order_moves(moves, board, tt_move)
     for fx, fy, tx, ty in ordered:
         cap_color, cap_kind = board.move(fx, fy, tx, ty)
         value = -negamax(board, depth - 1, -beta, -alpha, opponent(player))
         board.unmove(fx, fy, tx, ty, cap_color, cap_kind)
         if value > best:
             best = value
+            best_move = (fx, fy, tx, ty)
         if best > alpha:
             alpha = best
         if alpha >= beta:
+            _record_history((fx, fy, tx, ty), depth)
             break
         _check_search_time()
+
+    # 存储置换表（跳过将死距离相关的强制分数，避免 mate-distance 干扰）
+    if abs(best) < MATE_SCORE - 100:
+        if best > orig_alpha and best < beta:
+            flag = TT_EXACT
+        elif best >= beta:
+            flag = TT_LOWER
+        else:
+            flag = TT_UPPER
+        _t_table[key] = (depth, flag, best, best_move)
     return best
 
 
@@ -177,7 +241,9 @@ def _best_at_depth(board: Board, player: int, depth: int) -> Optional[Move]:
     best_move: Optional[Move] = None
     best_score = -INF
 
-    ordered = sorted(moves, key=lambda m: _move_order(m, board), reverse=True)
+    entry = _t_table.get(board.zhash)
+    tt_move = entry[3] if entry is not None else None
+    ordered = _order_moves(moves, board, tt_move)
     for fx, fy, tx, ty in ordered:
         cap_color, cap_kind = board.move(fx, fy, tx, ty)
         value = -negamax(board, depth - 1, -beta, -alpha, opponent(player))

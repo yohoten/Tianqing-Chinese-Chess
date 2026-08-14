@@ -104,8 +104,14 @@ backup/                 旧版平铺代码备份
 
 ## 四、程序级改进清单（代码层面，2026-08-14 补充）
 
-### 已修复
+### 已修复 / 已落地（2026-08-14）
 - **重新开始竞态**：AI 在后台线程思考时点“重新开始”，旧线程完成后会把过时走法下到新对局。已用 `epoch` 局面代次校验丢弃过期结果（game.py）。
+- **状态机化**：显式状态 `STATE_PLAYING / STATE_AI_THINKING / STATE_GAME_OVER`（game.py），替代 flag 组合。
+- **悔棋**：走法历史栈 + “悔棋”按钮 / U 键，支持吃子恢复（undo_move，board 与 pieces 同步回滚）。
+- **引擎接口抽象**：`engine.py` 定义 `Engine` 协议 + `AlphaBetaEngine` 实现，game.py 通过接口调用，可替换外部引擎。
+- **AI 置换表 + 历史启发**：Zobrist 哈希（zobrist.py，Board 增量维护 zhash）+ TT（EXACT/LOWER/UPPER + 最佳走法缓存）+ 剪枝走法记功排序。depth4 8.35s → 3.96s。
+- **将帅位置缓存**：Board 维护 `_red_king/_black_king`（place/remove/move/unmove/copy 同步），`find_king` O(1)。
+- **git 版本管理**：已 init 并首次提交（v2.2.0 基线）。
 
 ### 建议（按优先级）
 

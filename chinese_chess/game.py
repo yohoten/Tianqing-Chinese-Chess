@@ -2,6 +2,8 @@
 
 玩家执红（下方），电脑执黑（上方），黑方由 Alpha-Beta AI 控制。
 AI 在独立线程中思考，避免思考期间界面冻结。
+
+状态机：PLAYING（玩家回合）→ AI_THINKING（电脑思考）→ 循环 / GAME_OVER（终局）。
 """
 import threading
 
@@ -9,13 +11,14 @@ import pygame
 
 from . import constants as C
 from . import board as board_render
-from .ai import DEFAULT_TIME_BUDGET, get_best_move, game_result
+from .ai import DEFAULT_TIME_BUDGET, game_result
 from .button import Button
 from .chessai_bridge import (
     chessai_status,
     chessai_validate_move,
     fen_from_board,
 )
+from .engine import AlphaBetaEngine
 from .pieces import (
     Board,
     Cannon,
@@ -25,9 +28,15 @@ from .pieces import (
     Mandarin,
     Pawn,
     Rook,
+    EMPTY,
     legal_moves_with_check,
     is_in_check,
 )
+
+# 游戏状态
+STATE_PLAYING = "playing"            # 轮到玩家（红）
+STATE_AI_THINKING = "ai_thinking"    # 电脑思考中（黑）
+STATE_GAME_OVER = "game_over"        # 终局
 
 
 class MainGame:
@@ -36,20 +45,22 @@ class MainGame:
     def __init__(self):
         self.window = None
         self.images = {}
+        self.engine = AlphaBetaEngine()   # 走子引擎（可替换）
         self.pieces = []
         self.board = None
         self.selected = None          # 当前选中的棋子对象
         self.selected_moves = []      # 选中棋子的合法走法缓存（渲染用）
         self.current_player = C.RED_PLAYER
-        self.game_over = False
+        self.state = STATE_PLAYING
         self.result_text = ""
         self.button_restart = None
+        self.button_undo = None
         self.running = False
-        self.ai_thinking = False      # 是否有 AI 线程在思考
         self.ai_move = None           # AI 线程完成后的结果
         self.ai_thread = None
         self.epoch = 0                # 局面代次：丢弃过期 AI 线程的结果
         self.check_status = False     # 当前行动方是否被将军（渲染用缓存）
+        self.history = []             # 走法历史 [(fx, fy, tx, ty, mover, victim)]
         # 棋局分析面板（chessai 集成）
         self.show_analysis = False
         self.analysis_fen = ""
@@ -65,6 +76,8 @@ class MainGame:
         self.window = pygame.display.set_mode([C.SCREEN_WIDTH, C.SCREEN_HEIGHT])
         pygame.display.set_caption("天青-中国象棋")
         self.images = C.load_piece_images()
+        self.button_undo = Button(self.window, "悔棋",
+                                  C.SCREEN_WIDTH - 160, 240)
         self.button_restart = Button(self.window, "重新开始",
                                      C.SCREEN_WIDTH - 160, 300)
         self.reset_game()
@@ -76,12 +89,12 @@ class MainGame:
         self.selected = None
         self.selected_moves = []
         self.current_player = C.RED_PLAYER
-        self.game_over = False
+        self.state = STATE_PLAYING
         self.result_text = ""
-        self.ai_thinking = False
         self.ai_move = None
         self.ai_thread = None
         self.check_status = False
+        self.history = []
         self.show_analysis = False
         self.analysis_fen = ""
         self.analysis_status = None
@@ -134,17 +147,15 @@ class MainGame:
         pygame.quit()
 
     def _update(self):
-        # 轮到电脑时在后台线程思考，主线程继续渲染（界面不冻结）
-        if not self.game_over and self.current_player == C.BLACK_PLAYER:
+        # 电脑思考状态：后台线程搜索，主线程继续渲染（界面不冻结）
+        if self.state == STATE_AI_THINKING:
             if self.ai_thread is None and self.ai_move is None:
-                self.ai_thinking = True
                 self.ai_thread = threading.Thread(target=self._ai_work, daemon=True)
                 self.ai_thread.start()
             elif self.ai_move is not None:
                 move = self.ai_move
                 self.ai_move = None
                 self.ai_thread = None
-                self.ai_thinking = False
                 if move:
                     self._do_move(move)
                 self._finish_turn()
@@ -152,13 +163,13 @@ class MainGame:
     def _ai_work(self):
         """后台线程：执行 AI 搜索（只读 self.pieces，安全）。
 
-        通过 epoch 校验丢弃过期结果：若线程期间用户点了“重新开始”，
+        通过 epoch 校验丢弃过期结果：若线程期间用户点了“重新开始”或“悔棋”，
         结果不应用到新对局。
         """
         epoch = self.epoch
         try:
-            move = get_best_move(
-                self.pieces, depth=4, max_time=DEFAULT_TIME_BUDGET,
+            move = self.engine.get_best_move(
+                self.pieces, max_time=DEFAULT_TIME_BUDGET,
                 player=C.BLACK_PLAYER,
             )
         except Exception as exc:
@@ -168,14 +179,14 @@ class MainGame:
             self.ai_move = move
 
     def _finish_turn(self):
-        """切换行动方并检查终局。"""
+        """切换行动方、检查终局并推进状态机。"""
         self.current_player = (
             C.BLACK_PLAYER if self.current_player == C.RED_PLAYER
             else C.RED_PLAYER
         )
         result = game_result(self.board, self.current_player)
         if result is not None:
-            self.game_over = True
+            self.state = STATE_GAME_OVER
             self.check_status = False
             if result == 0:
                 self.result_text = "困毙，和棋"
@@ -186,6 +197,9 @@ class MainGame:
         else:
             # 缓存将军状态供渲染，避免每帧全盘扫描
             self.check_status = is_in_check(self.board, self.current_player)
+            self.state = (STATE_AI_THINKING
+                          if self.current_player == C.BLACK_PLAYER
+                          else STATE_PLAYING)
         if self.show_analysis:
             self._refresh_analysis()
 
@@ -201,10 +215,62 @@ class MainGame:
             self.analysis_status = None
         # 自研 AI 浅层快速推荐（预算 0.5s，实际通常远小于此）
         try:
-            self.analysis_hint = get_best_move(
-                self.pieces, depth=2, max_time=0.5, player=self.current_player)
+            self.analysis_hint = self.engine.get_best_move(
+                self.pieces, max_time=0.5, player=self.current_player)
         except Exception:
             self.analysis_hint = None
+
+    # ------------------------------------------------------------------
+    # 走子与悔棋
+    # ------------------------------------------------------------------
+
+    def _do_move(self, move):
+        fx, fy, tx, ty = move
+        victim = self._piece_at(tx, ty)
+        if victim is not None:
+            self.pieces.remove(victim)
+        self.board.move(fx, fy, tx, ty)
+        piece = self._piece_at(fx, fy)
+        piece.x, piece.y = tx, ty
+        self.history.append((fx, fy, tx, ty, self.current_player, victim))
+
+    def undo_move(self):
+        """悔棋：撤销最近一个完整回合，回到玩家上次决策前。
+
+        玩家刚走完（电脑思考中）时撤销一步；玩家回合时撤销电脑+玩家两步。
+        同时作废正在运行的 AI 线程结果（epoch 递增）。
+        """
+        if not self.history:
+            return
+
+        # 作废在跑的 AI 线程
+        self.epoch += 1
+        self.ai_move = None
+        self.ai_thread = None
+
+        def pop_one():
+            fx, fy, tx, ty, _mover, victim = self.history.pop()
+            piece = self._piece_at(tx, ty)
+            # 被吃子信息来自 victim 对象；无吃子时目标格应恢复为空
+            cap_color = victim.player if victim is not None else EMPTY
+            cap_kind = victim.kind if victim is not None else ""
+            self.board.unmove(fx, fy, tx, ty, cap_color, cap_kind)
+            piece.x, piece.y = fx, fy
+            if victim is not None:
+                self.pieces.append(victim)
+
+        pop_one()
+        # 若撤销后最后一步是红方（玩家）走的，继续撤销（完整回合 = 黑+红）
+        if self.history and self.history[-1][4] == C.RED_PLAYER:
+            pop_one()
+
+        self.current_player = C.RED_PLAYER
+        self.selected = None
+        self.selected_moves = []
+        self.state = STATE_PLAYING
+        self.check_status = is_in_check(self.board, self.current_player)
+        if self.show_analysis:
+            self._refresh_analysis()
 
     # ------------------------------------------------------------------
     # 事件
@@ -222,14 +288,21 @@ class MainGame:
                     self.show_analysis = not self.show_analysis
                     if self.show_analysis:
                         self._refresh_analysis()
+                # U 键悔棋
+                elif event.key == pygame.K_u:
+                    self.undo_move()
 
     def _on_click(self, pos):
-        # 重新开始按钮始终可用
+        # 按钮始终可用（含终局/思考中）
         if self.button_restart.is_clicked(pos):
             self.reset_game()
             return
+        if self.button_undo.is_clicked(pos):
+            self.undo_move()
+            return
 
-        if self.game_over or self.current_player != C.RED_PLAYER:
+        # 棋盘操作仅限玩家回合
+        if self.state != STATE_PLAYING:
             return
 
         xy = self._pixel_to_board(pos)
@@ -274,15 +347,6 @@ class MainGame:
                 return p
         return None
 
-    def _do_move(self, move):
-        fx, fy, tx, ty = move
-        victim = self._piece_at(tx, ty)
-        if victim is not None:
-            self.pieces.remove(victim)
-        self.board.move(fx, fy, tx, ty)
-        piece = self._piece_at(fx, fy)
-        piece.x, piece.y = tx, ty
-
     # ------------------------------------------------------------------
     # 渲染
     # ------------------------------------------------------------------
@@ -292,7 +356,7 @@ class MainGame:
         board_render.draw_chessboard(self.window)
 
         # 选中高亮 + 可走提示（用缓存，避免每帧重算）
-        if self.selected is not None and not self.game_over:
+        if self.selected is not None and self.state != STATE_GAME_OVER:
             board_render.draw_highlight(self.window, self.selected.x, self.selected.y)
             for tx, ty in self.selected_moves:
                 board_render.draw_hint(self.window, tx, ty)
@@ -302,6 +366,7 @@ class MainGame:
             image = self.images[p.image_key]
             board_render.draw_piece(self.window, image, p.x, p.y)
 
+        self.button_undo.draw()
         self.button_restart.draw()
         self._draw_status()
         if self.show_analysis:
@@ -375,16 +440,16 @@ class MainGame:
         x = C.SCREEN_WIDTH - 160
         y = C.START_Y
 
-        if self.game_over:
+        if self.state == STATE_GAME_OVER:
             board_render.draw_text(self.window, self.result_text, x, y + 40,
                                    size=22, color=C.TEXT_COLOR)
             return
 
         # 轮到谁
-        if self.current_player == C.RED_PLAYER:
-            turn_text = "轮到：红方（你）"
-        else:
+        if self.state == STATE_AI_THINKING:
             turn_text = "轮到：黑方（电脑思考中...）"
+        else:
+            turn_text = "轮到：红方（你）"
         board_render.draw_text(self.window, turn_text, x, y, size=18,
                                color=C.TEXT_COLOR)
 
@@ -392,7 +457,7 @@ class MainGame:
         if self.check_status:
             board_render.draw_text(self.window, "将军！", x, y + 30,
                                    size=22, color=C.TEXT_COLOR)
-        board_render.draw_text(self.window, "按 H 查看棋局分析", x, y + 60,
+        board_render.draw_text(self.window, "按 H 查看棋局分析 / U 悔棋", x, y + 60,
                                size=14, color=(120, 120, 120))
 
 
